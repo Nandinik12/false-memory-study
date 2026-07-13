@@ -1,0 +1,15 @@
+{
+  "mode": "mock",
+  "n_steps": 60,
+  "k": 15,
+  "consolidate_every": 5,
+  "retrieve_top_m": 6,
+  "contradiction_offset": 26,
+  "target": ["billing-api", "region"],
+  "arms": ["E+", "E-", "T"],
+  "seeds": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+  "p_defend": 0.6,
+  "p_reverify": 0.05,
+  "mitigation": false,
+  "out_dir": "runs/mock"
+}
