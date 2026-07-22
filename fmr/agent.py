@@ -17,7 +17,7 @@ REASON_RE = re.compile(r"REASON:\s*([^\n]+)")
 
 
 def norm(v: str) -> str:
-    return (v or "").strip().strip("'\"`.").lower()
+    return (v or "").strip().strip("'\"`.*_ \t").lower()
 
 
 def run_step(world, task, memory, llm, target):

@@ -24,16 +24,21 @@ class AnthropicLLM:
         last_err = None
         for attempt in range(4):
             try:
-                resp = self.client.messages.create(
-                    model=self.model, max_tokens=self.max_tokens, temperature=self.temperature,
-                    system=system, messages=[{"role": "user", "content": prompt}],
-                )
+                mt = max(self.max_tokens, 2500) if kind == "consolidate" else self.max_tokens
+                kwargs = dict(model=self.model, max_tokens=mt,
+                              system=system, messages=[{"role": "user", "content": prompt}])
+                if self.temperature is not None:
+                    kwargs["temperature"] = self.temperature
+                resp = self.client.messages.create(**kwargs)
                 self.n_calls += 1
                 self.in_tokens += resp.usage.input_tokens
                 self.out_tokens += resp.usage.output_tokens
-                return resp.content[0].text
+                return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
             except Exception as e:  # rate limits / transient
                 last_err = e
+                if "temperature" in str(e):      # model rejects temperature (e.g. Sonnet 5)
+                    self.temperature = None
+                    continue
                 time.sleep(2 ** attempt * 2)
         raise RuntimeError(f"Anthropic call failed after retries: {last_err}")
 

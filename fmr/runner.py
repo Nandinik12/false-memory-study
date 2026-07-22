@@ -37,13 +37,16 @@ def grade(world, task, episode):
 def false_in_notes(memory, world):
     fv = norm(world.false_value)
     svc = world.target[0]
-    return any(fv in n["text"].lower() and svc in n["text"].lower() for n in memory.notes)
+    return any(fv in n["text"].lower() and svc in n["text"].lower()
+               and "conflict" not in n["text"].lower() for n in memory.notes)
 
 
 def run_one(cfg, arm, seed, out_dir):
     target = tuple(cfg["target"])
     world = World(seed=seed, arm=arm, target=target, k=cfg["k"])
-    schedule = build_schedule(world, cfg["n_steps"], cfg["contradiction_offset"], seed)
+    schedule = build_schedule(world, cfg["n_steps"], cfg["contradiction_offset"], seed,
+                              consolidate_every=cfg.get("consolidate_every", 5),
+                              lag_probes=cfg.get("lag_probes"))
     memory = MemoryStore(retrieve_top_m=cfg.get("retrieve_top_m", 6))
     llm = make_llm(cfg, seed)
     C = cfg.get("consolidate_every", 5)

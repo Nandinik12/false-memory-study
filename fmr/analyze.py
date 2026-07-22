@@ -42,9 +42,14 @@ def per_run_metrics(run):
     out = {"arm": arm, "seed": m["seed"]}
     # Commit: false value in notes at first consolidation at/after k
     commit = None
+    fv = m["false_value"].lower(); svc = m["cfg"]["target"][0].lower()
     for c in run["cons"]:
         if c["step"] >= k:
-            commit = c.get("false_in_notes", False)
+            if "notes" in c:   # recompute conflict-aware: a CONFLICT flag is not a belief
+                commit = any(fv in n.lower() and svc in n.lower()
+                             and "conflict" not in n.lower() for n in c["notes"])
+            else:
+                commit = c.get("false_in_notes", False)
             break
     out["committed"] = bool(commit) if arm == "E+" else None
 
@@ -65,9 +70,24 @@ def per_run_metrics(run):
          "is_correct": s["is_correct"]}
         for s in run["steps"] if s["type"] == "derived" and s.get("graded")
     ]
-    # Durability: all post-contradiction probes correct?
-    post = [p for p in out["probe_points"] if p["post_contradiction"]]
-    out["durable_correction"] = (all(p["is_correct"] for p in post) if (contr and contr["is_correct"] and post) else None)
+    # Durability, split into two distinct phenomena (see pilot finding 2026-07-13):
+    # - lag window: probes AFTER the contradiction but BEFORE the first subsequent
+    #   consolidation. The correction lives only in the episodic buffer; retrieval
+    #   still serves the old note. False assertions here = "correction lag".
+    # - relapse: probes AFTER the first post-contradiction consolidation. False
+    #   assertions here = genuine relapse / failed consolidation of the correction.
+    first_cons = next((c["step"] for c in run["cons"] if c_step and c["step"] >= c_step), None)
+    post = [(p, s) for p, s in
+            [({"offset": s["step"] - k, "is_correct": s["is_correct"],
+               "asserted_false": s.get("asserted_false", False)}, s["step"])
+             for s in run["steps"] if s["type"] == "probe" and s.get("graded")
+             and c_step and s["step"] > c_step]]
+    lag = [p for p, st in post if first_cons and st <= first_cons]
+    late = [p for p, st in post if first_cons and st > first_cons]
+    out["lag_false"] = (any(p["asserted_false"] for p in lag) if lag else None)
+    out["relapsed"] = (any(p["asserted_false"] for p in late) if late else None)
+    out["durable_correction"] = (contr["is_correct"] and not out["relapsed"]
+                                 if (contr and late) else None)
     out["distractor_acc"] = _acc([s for s in run["steps"] if s["type"] == "distractor" and s.get("graded")])
     return out
 
@@ -88,8 +108,10 @@ def aggregate(runs):
         s["correction_rate"] = boot_ci([1.0 if p["corrected"] else 0.0 for p in ps if p["corrected"] is not None])
         if arm == "E+":
             s["defense_rate"] = boot_ci([1.0 if p["defended"] else 0.0 for p in ps if p["defended"] is not None])
-            dur = [1.0 if p["durable_correction"] else 0.0 for p in ps if p["durable_correction"] is not None]
-            s["durable_correction_rate"] = boot_ci(dur) if dur else None
+            for key, name in [("lag_false", "lag_false_rate"), ("relapsed", "relapse_rate"),
+                              ("durable_correction", "durable_correction_rate")]:
+                vals = [1.0 if p[key] else 0.0 for p in ps if p[key] is not None]
+                s[name] = boot_ci(vals) if vals else None
         s["distractor_acc"] = boot_ci([p["distractor_acc"] for p in ps if p["distractor_acc"] == p["distractor_acc"]])
         # retention / compounding curves: offset -> rate across runs
         for key, name in [("probe_points", "retention"), ("derived_points", "compounding")]:
@@ -173,7 +195,8 @@ def main(run_dir):
         json.dump({"per_run": per, "summary": summary}, f, indent=2, default=str)
     for arm, s in summary.items():
         print(f"\n=== arm {arm} (n={s['n_runs']}) ===")
-        for key in ("commit_rate", "correction_rate", "defense_rate", "durable_correction_rate", "distractor_acc"):
+        for key in ("commit_rate", "correction_rate", "defense_rate", "lag_false_rate",
+                    "relapse_rate", "durable_correction_rate", "distractor_acc"):
             if s.get(key):
                 m, lo, hi = s[key]
                 print(f"  {key:26s} {m:.2f}  [{lo:.2f}, {hi:.2f}]")

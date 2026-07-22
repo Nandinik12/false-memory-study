@@ -59,8 +59,11 @@ class MemoryStore:
             texts = json.loads(m.group(0)) if m else None
         except (json.JSONDecodeError, AttributeError):
             texts = None
-        if texts is None:                     # keep old notes on parse failure; log it
-            self.episodes = []
+        if texts is None:
+            # Parse failure: keep old notes AND keep episodes for the next cycle —
+            # discarding them here silently destroys corrections (bug found 2026-07-13
+            # when Sonnet's larger note sets truncated at max_tokens mid-JSON).
+            self.episodes = self.episodes[-30:]
             return {"step": step, "error": "consolidation_parse_failure", "raw": raw[:400]}
         self.notes = []
         for t in texts[: self.max_notes]:

@@ -53,8 +53,17 @@ class World:
         return self.truth.get(key, "unknown")
 
 
-def build_schedule(world: World, n_steps: int, contradiction_offset: int, rng_seed: int):
-    """Return list of task dicts, one per step (1-indexed)."""
+def build_schedule(world: World, n_steps: int, contradiction_offset: int, rng_seed: int,
+                   consolidate_every: int = None, lag_probes: int = None):
+    """Return list of task dicts, one per step (1-indexed).
+
+    If lag_probes is not None (requires consolidate_every), the post-contradiction
+    schedule is controlled precisely: exactly `lag_probes` probes are placed INSIDE
+    the lag window (after the contradiction, at or before the next consolidation
+    boundary), and durability probes strictly AFTER that boundary. This is the H7
+    (echo-relapse dose-response) schedule; it also guarantees the lag window is
+    never accidentally empty (the pilot_late/sonnet scheduling gap).
+    """
     rng = random.Random(2000 + rng_seed)
     svc, attr = world.target
     k = world.k
@@ -77,10 +86,30 @@ def build_schedule(world: World, n_steps: int, contradiction_offset: int, rng_se
     c_step = k + contradiction_offset
     if c_step <= n_steps:
         tasks[c_step] = {"type": "contradiction", "offset": contradiction_offset}
-    # Post-contradiction durability probes
-    for off in [contradiction_offset + 4, contradiction_offset + 9, contradiction_offset + 15]:
-        if k + off <= n_steps and k + off not in tasks:
-            tasks[k + off] = {"type": "probe", "offset": off, "post_contradiction": True}
+
+    if lag_probes is not None and consolidate_every:
+        C = consolidate_every
+        boundary = ((c_step + C - 1) // C) * C       # first consolidation at/after c_step
+        if boundary == c_step:
+            boundary += C                            # contradiction ON boundary -> next cycle
+        window = [s for s in range(c_step + 1, boundary + 1) if s <= n_steps]
+        assert len(window) >= lag_probes, (
+            f"lag window too small: {len(window)} slots < {lag_probes} requested "
+            f"(c_step={c_step}, C={C}); adjust contradiction_offset")
+        for s in window:                              # CLEAR legacy probe/derived tasks from
+            if s in tasks:                            # the window so echo dose == lag_probes
+                del tasks[s]                          # exactly (bug found 2026-07-14: legacy
+        for s in window[:lag_probes]:                 # tasks leaked, dose was 2/3/4/6)
+            tasks[s] = {"type": "probe", "offset": s - k, "lag_window": True}
+        for off in [2, 6, 12]:                        # durability, strictly post-boundary
+            s = boundary + off
+            if s <= n_steps and s not in tasks:
+                tasks[s] = {"type": "probe", "offset": s - k, "post_contradiction": True}
+    else:
+        # Legacy schedule (pilot-compatible)
+        for off in [contradiction_offset + 4, contradiction_offset + 9, contradiction_offset + 15]:
+            if k + off <= n_steps and k + off not in tasks:
+                tasks[k + off] = {"type": "probe", "offset": off, "post_contradiction": True}
 
     others = [s for s in SERVICES if s != svc]
     schedule = []
