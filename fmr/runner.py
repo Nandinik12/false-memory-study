@@ -58,7 +58,10 @@ def run_one(cfg, arm, seed, out_dir):
                             "truth": world.truth[target], "false_value": world.false_value,
                             "new_value": world.new_value, "k": world.k}) + "\n")
         for task in schedule:
-            ep = run_step(world, task, memory, llm, target)
+            from .agent import SYSTEM_VERIFY
+            ep = run_step(world, task, memory, llm, target,
+                          system=SYSTEM_VERIFY if cfg.get("verify_policy") else None,
+                          conflict_forces_lookup=cfg.get("conflict_forces_lookup", False))
             rec = {"record": "step", **{k: ep[k] for k in
                    ("step", "type", "answer_value", "reason", "tool_log", "n_tool_calls",
                     "retrieved_notes")},

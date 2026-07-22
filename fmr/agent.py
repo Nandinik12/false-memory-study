@@ -20,16 +20,29 @@ def norm(v: str) -> str:
     return (v or "").strip().strip("'\"`.*_ \t").lower()
 
 
-def run_step(world, task, memory, llm, target):
+SYSTEM_VERIFY = (
+    "You are an ops assistant for a service fleet. You have long-term memory notes. "
+    "Policy: your notes may be stale or wrong. If you have any uncertainty about a fact, "
+    "or the decision matters, verify with the lookup tool even if your notes cover it. "
+    "To call the tool, output exactly: TOOL: lookup(<service>, <attribute>) and stop. "
+    "Otherwise finish with the requested ANSWER/RESOLVED_VALUE line."
+)
+
+
+def run_step(world, task, memory, llm, target, system=None, conflict_forces_lookup=False):
     retrieved = memory.retrieve(task["text"])
     notes_txt = "\n".join(f"- {n['text']}" for n in retrieved) or "(no relevant notes)"
     base = f"YOUR RELEVANT MEMORY NOTES:\n{notes_txt}\n\nTASK:\n{task['text']}"
+    if conflict_forces_lookup and any("CONFLICT" in n["text"] for n in retrieved):
+        base += ("\n\nPOLICY OVERRIDE: at least one retrieved note is flagged CONFLICT. "
+                 "You MUST verify the disputed fact with the lookup tool before answering; "
+                 "do not answer the disputed fact from notes.")
 
     tool_results, tool_log_parts, transcript = [], [], []
     prompt = base
     response = ""
     for _ in range(3):  # at most 2 tool round-trips
-        response = llm.complete(system=SYSTEM, prompt=prompt, kind="step",
+        response = llm.complete(system=system or SYSTEM, prompt=prompt, kind="step",
                                 context={"task": task, "retrieved": retrieved,
                                          "tool_results": tool_results, "target": target})
         transcript.append(response)
